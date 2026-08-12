@@ -7,16 +7,28 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.API_KEY; // Zapier sends this in X-API-Key header
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const GEN_DIR = path.join(__dirname, "generated");
+const LOG_FILE = path.join(__dirname, "signature-log.csv");
 
-// ---- auth ----
-function requireApiKey(req, res, next) {
-  if (!API_KEY) return next(); // no key set = auth disabled (dev only)
-  const key = req.header("X-API-Key");
-  if (key !== API_KEY) return res.status(401).json({ error: "invalid or missing X-API-Key" });
-  next();
+// ---- logging ----
+async function logGeneration({ employee_id, firstname, lastname, filename }) {
+  const row = [
+    new Date().toISOString(),
+    employee_id,
+    firstname,
+    lastname,
+    filename,
+  ]
+    .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+    .join(",") + "\n";
+
+  try {
+    await fs.access(LOG_FILE);
+  } catch {
+    await fs.writeFile(LOG_FILE, "timestamp,employee_id,firstname,lastname,filename\n", "utf-8");
+  }
+  await fs.appendFile(LOG_FILE, row, "utf-8");
 }
 
 // ---- template (unchanged from MCP tool) ----
@@ -48,7 +60,7 @@ function buildSignatureHtml({ name, title, department, phone, email }) {
                         <span style="display:block; color:#58595B; font-size:12px;">${title} - ${department}</span>
                     </div>
                     <div style="line-height:20px; padding-bottom: 11px; border-bottom: #9fa0a2 1px solid;">
-                        <a href="tel:${phone}" style="color: #58595b; text-decoration: none;">${phone}</a><br />
+                        ${phone ? `<a href="tel:${phone}" style="color: #58595b; text-decoration: none;">${phone}</a><br />` : ""}
                         <a href="mailto:${email}" style="color: #58595b; text-decoration: none;" target="_blank">${email}</a>
                     </div>
                     <div style="line-height:18px; padding-top: 11px; color:#58595B;">
@@ -77,15 +89,15 @@ function safeSlug(s) {
 }
 
 // ---- POST /generate-signature ----
-// body: { employee_id, name, title, department, phone, email }
+// body: { employee_id, name, title, department, email, phone? }  phone optional
 // returns: { download_url, filename }
-app.post("/generate-signature", requireApiKey, async (req, res) => {
+app.post("/generate-signature", async (req, res) => {
   const { employee_id, name, title, department, phone, email } = req.body || {};
-  const missing = ["employee_id", "name", "title", "department", "phone", "email"].filter(
+  const missing = ["employee_id", "name", "title", "department", "email"].filter(
     (k) => !req.body?.[k]
   );
   if (missing.length) {
-    return res.status(400).json({ error: `missing fields: ${missing.join(", ")}` });
+    return res.status(200).json({ success: false, error: `missing fields: ${missing.join(", ")}` });
   }
 
   const nameParts = name.trim().split(/\s+/);
@@ -104,10 +116,17 @@ app.post("/generate-signature", requireApiKey, async (req, res) => {
     await fs.mkdir(GEN_DIR, { recursive: true });
     await fs.writeFile(filePath, html, "utf-8");
   } catch (err) {
-    return res.status(500).json({ error: "failed to write file", detail: err.message });
+    return res.status(200).json({ success: false, error: "failed to write file", detail: err.message });
+  }
+
+  try {
+    await logGeneration({ employee_id, firstname, lastname, filename: fileName });
+  } catch (err) {
+    console.error("log write failed:", err.message); // don't fail the request over this
   }
 
   return res.json({
+    success: true,
     filename: fileName,
     download_url: `${BASE_URL}/signature/${fileName}`,
   });
@@ -132,6 +151,18 @@ app.get("/signature/:filename", async (req, res) => {
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.sendFile(filePath);
+});
+
+// ---- GET /logs ----
+// returns raw CSV of every signature generated so far
+app.get("/logs", async (req, res) => {
+  try {
+    await fs.access(LOG_FILE);
+  } catch {
+    return res.status(200).type("text/csv").send("timestamp,employee_id,firstname,lastname,filename\n");
+  }
+  res.type("text/csv");
+  res.sendFile(LOG_FILE);
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
