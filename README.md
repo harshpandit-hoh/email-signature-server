@@ -2,10 +2,12 @@
 
 HTTP wrapper around the local email-signature MCP tool logic. Zapier calls POST, gets back download URL. User clicks URL, browser downloads HTML signature file.
 
+No auth — open endpoints. Download links carry a random token in the filename, so they're unguessable even without a key.
+
 ## Endpoints
 
 ### POST /generate-signature
-Headers: `X-API-Key: <your key>` (if API_KEY env set), `Content-Type: application/json`
+Headers: `Content-Type: application/json`
 
 Body:
 ```json
@@ -14,40 +16,61 @@ Body:
   "name": "Harsh Pandit",
   "title": "Sr. Executive - IT",
   "department": "IT",
-  "phone": "+91XXXXXXXXXX",
-  "email": "harsh.pandit@houseofhiranandani.com"
+  "email": "harsh.pandit@houseofhiranandani.com",
+  "phone": "+91XXXXXXXXXX"
 }
 ```
+`phone` is optional — omit it and the signature just skips that line.
 
-Response:
+Response — always HTTP 200 (so Zapier doesn't need separate error-branch paths; check `success` in the body instead):
 ```json
-{ "filename": "sdpl191_harsh_pandit_a1b2c3d4e5f6.html", "download_url": "http://<host>:3000/signature/sdpl191_harsh_pandit_a1b2c3d4e5f6.html" }
+{ "success": true, "filename": "sdpl191_harsh_pandit_a1b2c3d4e5f6.html", "download_url": "http://<host>/email-sign/signature/sdpl191_harsh_pandit_a1b2c3d4e5f6.html" }
+```
+On missing required fields or a write failure:
+```json
+{ "success": false, "error": "missing fields: employee_id, title" }
 ```
 
 ### GET /signature/:filename
-No auth (browser click can't send headers). Random token in filename is the guard — serves file with `Content-Disposition: attachment`, triggers download.
+Serves file with `Content-Disposition: attachment`, triggers download.
+
+### GET /logs
+Raw CSV — timestamp, employee_id, firstname, lastname, filename — one row per generation.
 
 ## Local run
 ```bash
 npm install
-cp .env.example .env   # fill API_KEY, BASE_URL
-node -r dotenv/config server.js   # or export vars manually and `npm start`
+cp .env.example .env   # fill PORT, BASE_URL
+npm start
 ```
 
 ## VM deploy (pm2)
 ```bash
 npm install -g pm2
 npm install
-# edit ecosystem.config.js: API_KEY, BASE_URL = your VM's public IP/domain
+# edit ecosystem.config.js: BASE_URL = your VM's public IP/domain (+ path prefix if behind nginx location block)
 pm2 start ecosystem.config.js
 pm2 save
 pm2 startup   # persist across reboot
 ```
-Open the PORT (default 3000) in VM firewall/security group. Put nginx + TLS in front if exposing beyond Zapier's IP ranges.
+
+## nginx behind a path prefix (e.g. /email-sign)
+`proxy_pass` needs a **trailing slash** to strip the location prefix before forwarding — otherwise nginx forwards `/email-sign/generate-signature` as-is and the app 404s (it only knows `/generate-signature`).
+
+```nginx
+location /email-sign/ {
+    proxy_pass http://127.0.0.1:3004/;   # <-- trailing slash strips /email-sign/
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+Note the trailing slash on **both** `location /email-sign/` and `proxy_pass .../`. Then set `BASE_URL=http://165.99.128.167/email-sign` in ecosystem.config.js so returned download_urls carry the right prefix. Reload nginx: `nginx -t && systemctl reload nginx`.
 
 ## Zapier wiring
 1. Trigger: whatever kicks off signature creation (form submit, new row, etc).
-2. Action: Webhooks by Zapier → POST → `http://<vm>:3000/generate-signature`, header `X-API-Key`, JSON body mapped from trigger fields.
+2. Action: Webhooks by Zapier → POST → `http://<vm>/email-sign/generate-signature`, JSON body mapped from trigger fields.
 3. Use `download_url` from the response in your next step (email, Slack message, etc). Clicking it downloads the .html signature.
 
 ## Files
@@ -56,3 +79,4 @@ Open the PORT (default 3000) in VM firewall/security group. Put nginx + TLS in f
 - `ecosystem.config.js` — pm2 process config for VM
 - `.env.example` — env var template
 - `generated/` — output dir, created at runtime, gitignore this
+- `signature-log.csv` — generation log, created at runtime, gitignore this
