@@ -173,7 +173,7 @@ app.get("/logs", async (req, res) => {
 // multipart/form-data. Fields: name, email, department, title (emp code), phone?, user_id?
 // File field: photo
 // Mirrors biostar.sh: create user (skip if exists) -> upload profile photo -> extract + attach visual face template
-app.post("/biostar/register-user", upload.single("photo"), async (req, res) => {
+app.post("/biostar/register-user", upload.single("file"), async (req, res) => {
   const { name, email, department, title, phone, user_id } = req.body || {};
   const missing = ["name", "email", "department", "title"].filter((k) => !req.body?.[k]);
   if (!req.file) missing.push("photo");
