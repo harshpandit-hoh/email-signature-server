@@ -2,6 +2,10 @@ const express = require("express");
 const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
+const multer = require("multer");
+const { registerUser } = require("./biostar");
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
 const app = express();
 app.use(express.json());
@@ -163,6 +167,42 @@ app.get("/logs", async (req, res) => {
   }
   res.type("text/csv");
   res.sendFile(LOG_FILE);
+});
+
+// ---- POST /biostar/register-user ----
+// multipart/form-data. Fields: name, email, department, title (emp code), phone?, user_id?
+// File field: photo
+// Mirrors biostar.sh: create user (skip if exists) -> upload profile photo -> extract + attach visual face template
+app.post("/biostar/register-user", upload.single("photo"), async (req, res) => {
+  const { name, email, department, title, phone, user_id } = req.body || {};
+  const missing = ["name", "email", "department", "title"].filter((k) => !req.body?.[k]);
+  if (!req.file) missing.push("photo");
+  if (missing.length) {
+    return res.status(400).json({ success: false, error: `missing fields: ${missing.join(", ")}` });
+  }
+
+  const now = new Date();
+  const fiveYearsOut = new Date(now);
+  fiveYearsOut.setFullYear(fiveYearsOut.getFullYear() + 5);
+
+  try {
+    const photoBase64 = req.file.buffer.toString("base64");
+    const steps = await registerUser({
+      userId: user_id || "",
+      name,
+      email,
+      department,
+      title,
+      phone,
+      empCode: title, // biostar.sh maps Title and Emp Code to the same value
+      startDatetime: now.toISOString().replace(/\.\d+Z$/, ".00Z"),
+      expiryDatetime: fiveYearsOut.toISOString().replace(/\.\d+Z$/, ".00Z"),
+      photoBase64,
+    });
+    return res.json({ success: true, ...steps });
+  } catch (err) {
+    return res.status(502).json({ success: false, error: err.message });
+  }
 });
 
 app.get("/health", (req, res) => res.json({ ok: true }));
