@@ -10,6 +10,16 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 *
 const app = express();
 app.use(express.json());
 
+// ---- request logging: every hit, every route ----
+app.use((req, res, next) => {
+  const start = Date.now();
+  console.log(`[req] ${req.method} ${req.originalUrl} from ${req.ip} content-type=${req.headers["content-type"] || "none"}`);
+  res.on("finish", () => {
+    console.log(`[res] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`);
+  });
+  next();
+});
+
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const GEN_DIR = path.join(__dirname, "generated");
@@ -175,9 +185,18 @@ app.get("/logs", async (req, res) => {
 // Mirrors biostar.sh: create user (skip if exists) -> upload profile photo -> extract + attach visual face template
 app.post("/biostar/register-user", upload.single("file"), async (req, res) => {
   const { name, email, department, title, phone, user_id } = req.body || {};
+  console.log("[biostar] body received:", JSON.stringify(req.body || {}));
+  console.log(
+    "[biostar] file received:",
+    req.file
+      ? `field="${req.file.fieldname}" originalname="${req.file.originalname}" mimetype=${req.file.mimetype} size=${req.file.size}b`
+      : "none"
+  );
+
   const missing = ["name", "email", "department", "title"].filter((k) => !req.body?.[k]);
   if (!req.file) missing.push("photo");
   if (missing.length) {
+    console.log(`[biostar] rejecting: missing ${missing.join(", ")}`);
     return res.status(400).json({ success: false, error: `missing fields: ${missing.join(", ")}` });
   }
 
@@ -187,6 +206,7 @@ app.post("/biostar/register-user", upload.single("file"), async (req, res) => {
 
   try {
     const photoBase64 = req.file.buffer.toString("base64");
+    console.log(`[biostar] starting registerUser for name="${name}" title="${title}" user_id="${user_id || "(auto)"}"`);
     const steps = await registerUser({
       userId: user_id || "",
       name,
@@ -199,8 +219,10 @@ app.post("/biostar/register-user", upload.single("file"), async (req, res) => {
       expiryDatetime: fiveYearsOut.toISOString().replace(/\.\d+Z$/, ".00Z"),
       photoBase64,
     });
+    console.log(`[biostar] success: ${JSON.stringify(steps)}`);
     return res.json({ success: true, ...steps });
   } catch (err) {
+    console.error(`[biostar] failed: ${err.message}`);
     return res.status(502).json({ success: false, error: err.message });
   }
 });
