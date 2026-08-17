@@ -136,26 +136,36 @@ async function registerVisualFace(sessionId, userId, photoBase64) {
 
 // Full flow. photoBase64 = raw base64 string (no data: prefix), matches bash's `base64 -w 0`.
 async function registerUser({ userId, name, email, department, title, phone, empCode, startDatetime, expiryDatetime, photoBase64 }) {
+  console.log("[biostar] logging in to", SERVER_IP);
   const sessionId = await login();
+  console.log("[biostar] session acquired");
   const steps = {};
 
   if (!userId) {
     userId = await getNextUserId(sessionId);
+    console.log("[biostar] auto-assigned next user_id:", userId);
   }
   steps.user_id = userId;
 
   const exists = await userExists(sessionId, userId);
   if (exists) {
+    console.log(`[biostar] user_id ${userId} already exists, skipping creation`);
     steps.user_created = false; // already existed, skipped creation like biostar.sh does
   } else {
+    console.log(`[biostar] creating user_id ${userId} (${name})`);
     await createUser(sessionId, { userId, name, email, department, title, phone, empCode, startDatetime, expiryDatetime });
+    console.log(`[biostar] user_id ${userId} created`);
     steps.user_created = true;
   }
 
+  console.log(`[biostar] uploading profile photo (${Math.round(photoBase64.length / 1024)}KB base64) for user_id ${userId}`);
   await uploadProfilePhoto(sessionId, userId, photoBase64);
+  console.log("[biostar] profile photo uploaded");
   steps.photo_uploaded = true;
 
+  console.log("[biostar] extracting + attaching visual face template");
   await registerVisualFace(sessionId, userId, photoBase64);
+  console.log("[biostar] visual face registered");
   steps.face_registered = true;
 
   return steps;
