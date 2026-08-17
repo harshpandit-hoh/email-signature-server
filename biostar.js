@@ -10,23 +10,32 @@ function base() {
   return `https://${SERVER_IP}`;
 }
 
-// node's built-in fetch (undici) refuses self-signed certs by default.
-// biostar.sh uses curl -k (insecure) because this hits a local/self-signed BioStar box.
-// undici needs its own Agent passed as `dispatcher` -- a plain https.Agent is ignored by fetch.
-const { Agent } = require("undici");
+// node's built-in global fetch is its own internal undici instance. Passing a dispatcher
+// built from a separately require()'d 'undici' package into global fetch can silently no-op
+// (different instance) -- cert check still applies -> generic "fetch failed" against a
+// self-signed box. Fix: use undici's own fetch + its own Agent together, guaranteed compatible.
+const { fetch: undiciFetch, Agent } = require("undici");
 const insecureDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
 
 async function biostarFetch(urlPath, { method = "GET", sessionId, body, rawHeaders } = {}) {
-  const res = await fetch(`${base()}${urlPath}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(sessionId ? { "bs-session-id": sessionId } : {}),
-      ...rawHeaders,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    dispatcher: insecureDispatcher,
-  });
+  let res;
+  try {
+    res = await undiciFetch(`${base()}${urlPath}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(sessionId ? { "bs-session-id": sessionId } : {}),
+        ...rawHeaders,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      dispatcher: insecureDispatcher,
+    });
+  } catch (err) {
+    // surface the real network cause (ECONNREFUSED, cert error, DNS, timeout, etc.)
+    // instead of undici's generic "fetch failed"
+    const cause = err.cause ? ` (cause: ${err.cause.code || err.cause.message || err.cause})` : "";
+    throw new Error(`BioStar request to ${urlPath} failed: ${err.message}${cause}`);
+  }
   const text = await res.text();
   let json;
   try {
@@ -41,16 +50,22 @@ async function login() {
   if (!SERVER_IP || !USERNAME || !PASSWORD) {
     throw new Error("BIOSTAR_SERVER_IP / BIOSTAR_USERNAME / BIOSTAR_PASSWORD not set in env");
   }
-  const res = await fetch(`${base()}/api/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ User: { login_id: USERNAME, password: PASSWORD } }),
-    dispatcher: insecureDispatcher,
-  });
+  let res;
+  try {
+    res = await undiciFetch(`${base()}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ User: { login_id: USERNAME, password: PASSWORD } }),
+      dispatcher: insecureDispatcher,
+    });
+  } catch (err) {
+    const cause = err.cause ? ` (cause: ${err.cause.code || err.cause.message || err.cause})` : "";
+    throw new Error(`BioStar login request failed: ${err.message}${cause}`);
+  }
   const sessionId = res.headers.get("bs-session-id");
   if (!sessionId) {
     const text = await res.text();
-    throw new Error(`BioStar login failed: ${text.slice(0, 300)}`);
+    throw new Error(`BioStar login failed (HTTP ${res.status}): ${text.slice(0, 300)}`);
   }
   return sessionId;
 }
