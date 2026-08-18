@@ -70,6 +70,12 @@ async function login() {
   return sessionId;
 }
 
+// BioStar returns Response.code as a STRING ("0"), not a number -- strict === 0 always
+// failed here even on real success. Normalize before comparing.
+function ok(json) {
+  return json?.Response?.code !== undefined && String(json.Response.code) === "0";
+}
+
 async function getNextUserId(sessionId) {
   const { json } = await biostarFetch("/api/users/next_user_id", { sessionId });
   const id = json?.User?.user_id;
@@ -79,7 +85,7 @@ async function getNextUserId(sessionId) {
 
 async function userExists(sessionId, userId) {
   const { json } = await biostarFetch(`/api/users/${userId}`, { sessionId });
-  return json?.Response?.code === 0;
+  return ok(json);
 }
 
 async function createUser(sessionId, { userId, name, email, department, title, phone, empCode, startDatetime, expiryDatetime }) {
@@ -100,7 +106,7 @@ async function createUser(sessionId, { userId, name, email, department, title, p
     },
   };
   const { json } = await biostarFetch("/api/users", { method: "POST", sessionId, body: payload });
-  if (json?.Response?.code !== 0) {
+  if (!ok(json)) {
     throw new Error(`BioStar user create failed: ${JSON.stringify(json)}`);
   }
 }
@@ -108,7 +114,7 @@ async function createUser(sessionId, { userId, name, email, department, title, p
 async function uploadProfilePhoto(sessionId, userId, photoBase64) {
   const payload = { User: { user_id: String(userId), photo: photoBase64 } };
   const { json } = await biostarFetch(`/api/users/${userId}`, { method: "PUT", sessionId, body: payload });
-  if (json?.Response?.code !== 0) {
+  if (!ok(json)) {
     throw new Error(`BioStar profile photo upload failed: ${JSON.stringify(json)}`);
   }
 }
@@ -120,7 +126,7 @@ async function registerVisualFace(sessionId, userId, photoBase64) {
     sessionId,
     body: { template_ex_picture: photoBase64 },
   });
-  if (step1.json?.Response?.code !== 0) {
+  if (!ok(step1.json)) {
     throw new Error(`BioStar face extraction failed: ${JSON.stringify(step1.json)}`);
   }
 
@@ -144,7 +150,7 @@ async function registerVisualFace(sessionId, userId, photoBase64) {
       },
     },
   });
-  if (step2.json?.Response?.code !== 0) {
+  if (!ok(step2.json)) {
     throw new Error(`BioStar face attach failed: ${JSON.stringify(step2.json)}`);
   }
 }
