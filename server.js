@@ -176,6 +176,17 @@ app.get("/logs", async (req, res) => {
   res.sendFile(LOG_FILE);
 });
 
+// BioStar rejects special characters in `department` (e.g. "&") -- error code 262172,
+// "Department do not allow special characters. or up to 64 characters".
+// Strip anything but letters/numbers/spaces, collapse whitespace, cap at 64 chars.
+function sanitizeDepartment(dept) {
+  return String(dept)
+    .replace(/[^a-zA-Z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 64);
+}
+
 // ---- POST /biostar/register-user ----
 // application/json. Fields: name, email, department, title (emp code), photo_url, phone?, user_id?
 // Mirrors biostar.sh: create user (skip if exists) -> upload profile photo -> extract + attach visual face template
@@ -208,11 +219,15 @@ app.post("/biostar/register-user", async (req, res) => {
     const photoBase64 = photoBuffer.toString("base64");
 
     console.log(`[biostar] starting registerUser for name="${name}" title="${title}" user_id="${user_id || "(auto)"}"`);
+    const cleanDepartment = sanitizeDepartment(department);
+    if (cleanDepartment !== department) {
+      console.log(`[biostar] sanitized department "${department}" -> "${cleanDepartment}"`);
+    }
     const steps = await registerUser({
       userId: user_id || "",
       name,
       email,
-      department,
+      department: cleanDepartment,
       title,
       phone,
       empCode: title, // biostar.sh maps Title and Emp Code to the same value
