@@ -2,10 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
-const multer = require("multer");
 const { registerUser } = require("./biostar");
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
 const app = express();
 app.use(express.json());
@@ -180,21 +177,13 @@ app.get("/logs", async (req, res) => {
 });
 
 // ---- POST /biostar/register-user ----
-// multipart/form-data. Fields: name, email, department, title (emp code), phone?, user_id?
-// File field: photo
+// application/json. Fields: name, email, department, title (emp code), photo_url, phone?, user_id?
 // Mirrors biostar.sh: create user (skip if exists) -> upload profile photo -> extract + attach visual face template
-app.post("/biostar/register-user", upload.single("file"), async (req, res) => {
-  const { name, email, department, title, phone, user_id } = req.body || {};
+app.post("/biostar/register-user", async (req, res) => {
+  const { name, email, department, title, phone, user_id, photo_url } = req.body || {};
   console.log("[biostar] body received:", JSON.stringify(req.body || {}));
-  console.log(
-    "[biostar] file received:",
-    req.file
-      ? `field="${req.file.fieldname}" originalname="${req.file.originalname}" mimetype=${req.file.mimetype} size=${req.file.size}b`
-      : "none"
-  );
 
-  const missing = ["name", "email", "department", "title"].filter((k) => !req.body?.[k]);
-  if (!req.file) missing.push("photo");
+  const missing = ["name", "email", "department", "title", "photo_url"].filter((k) => !req.body?.[k]);
   if (missing.length) {
     console.log(`[biostar] rejecting: missing ${missing.join(", ")}`);
     return res.status(400).json({ success: false, error: `missing fields: ${missing.join(", ")}` });
@@ -205,7 +194,19 @@ app.post("/biostar/register-user", upload.single("file"), async (req, res) => {
   fiveYearsOut.setFullYear(fiveYearsOut.getFullYear() + 5);
 
   try {
-    const photoBase64 = req.file.buffer.toString("base64");
+    console.log(`[biostar] fetching photo from ${photo_url}`);
+    const photoRes = await fetch(photo_url);
+    if (!photoRes.ok) {
+      throw new Error(`photo_url fetch failed: HTTP ${photoRes.status}`);
+    }
+    const arrayBuffer = await photoRes.arrayBuffer();
+    const photoBuffer = Buffer.from(arrayBuffer);
+    if (photoBuffer.length > 8 * 1024 * 1024) {
+      throw new Error(`photo too large: ${Math.round(photoBuffer.length / 1024 / 1024)}MB (max 8MB)`);
+    }
+    console.log(`[biostar] photo fetched: ${Math.round(photoBuffer.length / 1024)}KB, content-type=${photoRes.headers.get("content-type")}`);
+    const photoBase64 = photoBuffer.toString("base64");
+
     console.log(`[biostar] starting registerUser for name="${name}" title="${title}" user_id="${user_id || "(auto)"}"`);
     const steps = await registerUser({
       userId: user_id || "",
