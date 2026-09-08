@@ -105,7 +105,7 @@ function buildSignatureHtml({ name, title, department, phone, email, location })
                 <td width="54%" valign="middle" style="padding: 20px 10px;">
                     <div style="line-height:20px;">
                         <strong style="color:#58595B; font-size:14px; font-weight:bold;">${name}</strong><br>
-                        <span style="display:block; color:#58595B; font-size:12px;">${title} - ${department}</span>
+                        <span style="display:block; color:#58595B; font-size:12px;">${title} | ${department}</span>
                     </div>
                     <div style="line-height:20px; padding-bottom: 11px; border-bottom: #9fa0a2 1px solid;">
                         ${phone ? `<a href="tel:${phone}" style="color: #58595b; text-decoration: none;">${phone}</a><br />` : ""}
