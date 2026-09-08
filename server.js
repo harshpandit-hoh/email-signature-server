@@ -42,8 +42,43 @@ async function logGeneration({ employee_id, firstname, lastname, filename }) {
   await fs.appendFile(LOG_FILE, row, "utf-8");
 }
 
+// ---- office address lookup, keyed by "location" param ----
+// Ported from the old constants.js. Empty-string entries are intentional
+// (no address on file for that location) -- those fall through to Powai too.
+const LOCATIONS = {
+  Andheri: "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400 076",
+  Bannerghatta: "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560 038",
+  Beach: "",
+  Bhiwandi: "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400076",
+  Chembur: "Maitri Park, Union Park, Chembur, Mumbai, Maharashtra 400071",
+  Chennai: "House of Hiranandani, No 5/63 Old Mahabalipuram Road, Egattur Village, Opp. to Siruseri IT Park, Thalambur Post, Dist. Chennai Chengalpattu, Tamil Nadu - 600130",
+  Devanahalli: "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560 038",
+  Hebbal: "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560 038",
+  Hyderabad: "House Of Hiranandani, PLOT NO: 63 & 64, FLAT NO : 101 SHRI RESIDENCY, ALLURI SITARAMA RAJU NAGAR, MIYAPUR CHERUVU ROAD, MIYAPUR, HYDERABAD - 500049",
+  Indiranagar: "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560038",
+  Kandivali: "House of Hiranandani, Castalia, New Link road, Dahanukar Wadi Signal, Kandivali (W), Mumbai - 400 067",
+  Killick: "",
+  Maharashtra: "",
+  Maitri: "Maitri Park, Mumbai, Maharashtra, India, Chembur - 400071.",
+  Meadows: "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
+  North: "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
+  OHP: "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
+  Pogaon: "",
+  Powai: "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400 076",
+  Thane: "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
+};
+const DEFAULT_LOCATION = "Powai";
+
+function resolveAddress(location) {
+  const address = location ? LOCATIONS[location] : undefined;
+  // falls through to Powai when: no location given, location not in the list,
+  // or the location maps to an empty string (no address on file for it)
+  return address || LOCATIONS[DEFAULT_LOCATION];
+}
+
 // ---- template (unchanged from MCP tool) ----
-function buildSignatureHtml({ name, title, department, phone, email }) {
+function buildSignatureHtml({ name, title, department, phone, email, location }) {
+  const officeAddress = resolveAddress(location);
   return `
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -75,7 +110,7 @@ function buildSignatureHtml({ name, title, department, phone, email }) {
                         <a href="mailto:${email}" style="color: #58595b; text-decoration: none;" target="_blank">${email}</a>
                     </div>
                     <div style="line-height:18px; padding-top: 11px; color:#58595B;">
-                        Office Address: House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400 076<br>
+                        Office Address: ${officeAddress}<br>
                         <a href="https://www.houseofhiranandani.com/" style="color: #444; text-decoration: none;" target="_blank">houseofhiranandani.com</a>
                         <table style="display: contents;">
                             <tbody style="display: inline-flex; margin-top:5px;">
@@ -103,7 +138,7 @@ function safeSlug(s) {
 // body: { employee_id, name, title, department, email, phone? }  phone optional
 // returns: { download_url, filename }
 app.post("/generate-signature", async (req, res) => {
-  const { employee_id, name, title, department, phone, email } = req.body || {};
+  const { employee_id, name, title, department, phone, email, location } = req.body || {};
   const missing = ["employee_id", "name", "title", "department", "email"].filter(
     (k) => !req.body?.[k]
   );
@@ -121,7 +156,7 @@ app.post("/generate-signature", async (req, res) => {
   const fileName = `${empId}_${firstname}${lastname ? "_" + lastname : ""}_${token}.html`;
   const filePath = path.join(GEN_DIR, fileName);
 
-  const html = buildSignatureHtml({ name, title, department, phone, email });
+  const html = buildSignatureHtml({ name, title, department, phone, email, location });
 
   try {
     await fs.mkdir(GEN_DIR, { recursive: true });
