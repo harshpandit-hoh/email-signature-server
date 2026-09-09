@@ -2,7 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
-const { registerUser } = require("./biostar");
+const { registerUser, getProfilePicUrl } = require("./biostar");
 
 const app = express();
 app.use(express.json());
@@ -10,9 +10,13 @@ app.use(express.json());
 // ---- request logging: every hit, every route ----
 app.use((req, res, next) => {
   const start = Date.now();
-  console.log(`[req] ${req.method} ${req.originalUrl} from ${req.ip} content-type=${req.headers["content-type"] || "none"}`);
+  console.log(
+    `[req] ${req.method} ${req.originalUrl} from ${req.ip} content-type=${req.headers["content-type"] || "none"}`,
+  );
   res.on("finish", () => {
-    console.log(`[res] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`);
+    console.log(
+      `[res] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`,
+    );
   });
   next();
 });
@@ -24,20 +28,19 @@ const LOG_FILE = path.join(__dirname, "signature-log.csv");
 
 // ---- logging ----
 async function logGeneration({ employee_id, firstname, lastname, filename }) {
-  const row = [
-    new Date().toISOString(),
-    employee_id,
-    firstname,
-    lastname,
-    filename,
-  ]
-    .map((v) => `"${String(v).replace(/"/g, '""')}"`)
-    .join(",") + "\n";
+  const row =
+    [new Date().toISOString(), employee_id, firstname, lastname, filename]
+      .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+      .join(",") + "\n";
 
   try {
     await fs.access(LOG_FILE);
   } catch {
-    await fs.writeFile(LOG_FILE, "timestamp,employee_id,firstname,lastname,filename\n", "utf-8");
+    await fs.writeFile(
+      LOG_FILE,
+      "timestamp,employee_id,firstname,lastname,filename\n",
+      "utf-8",
+    );
   }
   await fs.appendFile(LOG_FILE, row, "utf-8");
 }
@@ -46,28 +49,39 @@ async function logGeneration({ employee_id, firstname, lastname, filename }) {
 // Ported from the old constants.js. Empty-string entries are intentional
 // (no address on file for that location) -- those fall through to Powai too.
 const LOCATIONS = {
-  Andheri: "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400 076",
-  Bannerghatta: "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560 038",
+  Andheri:
+    "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400 076",
+  Bannerghatta:
+    "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560 038",
   Beach: "",
-  Bhiwandi: "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400076",
+  Bhiwandi:
+    "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400076",
   Chembur: "Maitri Park, Union Park, Chembur, Mumbai, Maharashtra 400071",
-  Chennai: "House of Hiranandani, No 5/63 Old Mahabalipuram Road, Egattur Village, Opp. to Siruseri IT Park, Thalambur Post, Dist. Chennai Chengalpattu, Tamil Nadu - 600130",
-  Devanahalli: "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560 038",
-  Hebbal: "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560 038",
-  Hyderabad: "House Of Hiranandani, PLOT NO: 63 & 64, FLAT NO : 101 SHRI RESIDENCY, ALLURI SITARAMA RAJU NAGAR, MIYAPUR CHERUVU ROAD, MIYAPUR, HYDERABAD - 500049",
-  Indiranagar: "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560038",
-  Kandivali: "House of Hiranandani, Castalia, New Link road, Dahanukar Wadi Signal, Kandivali (W), Mumbai - 400 067",
+  Chennai:
+    "House of Hiranandani, No 5/63 Old Mahabalipuram Road, Egattur Village, Opp. to Siruseri IT Park, Thalambur Post, Dist. Chennai Chengalpattu, Tamil Nadu - 600130",
+  Devanahalli:
+    "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560 038",
+  Hebbal:
+    "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560 038",
+  Hyderabad:
+    "House Of Hiranandani, PLOT NO: 63 & 64, FLAT NO : 101 SHRI RESIDENCY, ALLURI SITARAMA RAJU NAGAR, MIYAPUR CHERUVU ROAD, MIYAPUR, HYDERABAD - 500049",
+  Indiranagar:
+    "House of Hiranandani, 757/B, 100 Feet Road, Hal 2nd stage, Indiranagar, Bengaluru, Karnataka - 560038",
+  Kandivali:
+    "House of Hiranandani, Castalia, New Link road, Dahanukar Wadi Signal, Kandivali (W), Mumbai - 400 067",
   Killick: "",
   Maharashtra: "",
   Maitri: "Maitri Park, Mumbai, Maharashtra, India, Chembur - 400071.",
-  Meadows: "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
-  North: "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
+  Meadows:
+    "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
+  North:
+    "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
   OHP: "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
   Pogaon: "",
-  Powai: "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400 076",
-  Thane: "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
-  "Gorai Site": "Shop No. 24, 25, Mangal Murti CHS Ltd, LT Rd, Opp. Maxus Cinemas, Gorai 3, Borivali West, Mumbai, Maharashtra 400091",
-  "Gorai Sales": "Gorai Nagar, Borivali West, Mumbai, Maharashtra 400091"
+  Powai:
+    "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400 076",
+  Thane:
+    "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
 };
 const DEFAULT_LOCATION = "Powai";
 
@@ -79,7 +93,14 @@ function resolveAddress(location) {
 }
 
 // ---- template (unchanged from MCP tool) ----
-function buildSignatureHtml({ name, title, department, phone, email, location }) {
+function buildSignatureHtml({
+  name,
+  title,
+  department,
+  phone,
+  email,
+  location,
+}) {
   const officeAddress = resolveAddress(location);
   return `
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -105,7 +126,7 @@ function buildSignatureHtml({ name, title, department, phone, email, location })
                 <td width="54%" valign="middle" style="padding: 20px 10px;">
                     <div style="line-height:20px;">
                         <strong style="color:#58595B; font-size:14px; font-weight:bold;">${name}</strong><br>
-                        <span style="display:block; color:#58595B; font-size:12px;">${title} | ${department}</span>
+                        <span style="display:block; color:#58595B; font-size:12px;">${title} - ${department}</span>
                     </div>
                     <div style="line-height:20px; padding-bottom: 11px; border-bottom: #9fa0a2 1px solid;">
                         ${phone ? `<a href="tel:${phone}" style="color: #58595b; text-decoration: none;">${phone}</a><br />` : ""}
@@ -133,24 +154,36 @@ function buildSignatureHtml({ name, title, department, phone, email, location })
 }
 
 function safeSlug(s) {
-  return String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return String(s)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
 }
 
 // ---- POST /generate-signature ----
 // body: { employee_id, name, title, department, email, phone? }  phone optional
 // returns: { download_url, filename }
 app.post("/generate-signature", async (req, res) => {
-  const { employee_id, name, title, department, phone, email, location } = req.body || {};
-  const missing = ["employee_id", "name", "title", "department", "email"].filter(
-    (k) => !req.body?.[k]
-  );
+  const { employee_id, name, title, department, phone, email, location } =
+    req.body || {};
+  const missing = [
+    "employee_id",
+    "name",
+    "title",
+    "department",
+    "email",
+  ].filter((k) => !req.body?.[k]);
   if (missing.length) {
-    return res.status(200).json({ success: false, error: `missing fields: ${missing.join(", ")}` });
+    return res
+      .status(200)
+      .json({ success: false, error: `missing fields: ${missing.join(", ")}` });
   }
 
   const nameParts = name.trim().split(/\s+/);
   const firstname = safeSlug(nameParts[0]);
-  const lastname = nameParts.length > 1 ? safeSlug(nameParts[nameParts.length - 1]) : "";
+  const lastname =
+    nameParts.length > 1 ? safeSlug(nameParts[nameParts.length - 1]) : "";
   const empId = safeSlug(employee_id);
 
   // random token in filename -> download links unguessable even without API key
@@ -158,17 +191,35 @@ app.post("/generate-signature", async (req, res) => {
   const fileName = `${empId}_${firstname}${lastname ? "_" + lastname : ""}_${token}.html`;
   const filePath = path.join(GEN_DIR, fileName);
 
-  const html = buildSignatureHtml({ name, title, department, phone, email, location });
+  const html = buildSignatureHtml({
+    name,
+    title,
+    department,
+    phone,
+    email,
+    location,
+  });
 
   try {
     await fs.mkdir(GEN_DIR, { recursive: true });
     await fs.writeFile(filePath, html, "utf-8");
   } catch (err) {
-    return res.status(200).json({ success: false, error: "failed to write file", detail: err.message });
+    return res
+      .status(200)
+      .json({
+        success: false,
+        error: "failed to write file",
+        detail: err.message,
+      });
   }
 
   try {
-    await logGeneration({ employee_id, firstname, lastname, filename: fileName });
+    await logGeneration({
+      employee_id,
+      firstname,
+      lastname,
+      filename: fileName,
+    });
   } catch (err) {
     console.error("log write failed:", err.message); // don't fail the request over this
   }
@@ -185,7 +236,11 @@ app.post("/generate-signature", async (req, res) => {
 app.get("/signature/:filename", async (req, res) => {
   const filename = req.params.filename;
   // guard against path traversal
-  if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) {
+  if (
+    filename.includes("..") ||
+    filename.includes("/") ||
+    filename.includes("\\")
+  ) {
     return res.status(400).json({ error: "bad filename" });
   }
   const filePath = path.join(GEN_DIR, filename);
@@ -207,7 +262,10 @@ app.get("/logs", async (req, res) => {
   try {
     await fs.access(LOG_FILE);
   } catch {
-    return res.status(200).type("text/csv").send("timestamp,employee_id,firstname,lastname,filename\n");
+    return res
+      .status(200)
+      .type("text/csv")
+      .send("timestamp,employee_id,firstname,lastname,filename\n");
   }
   res.type("text/csv");
   res.sendFile(LOG_FILE);
@@ -225,16 +283,21 @@ function sanitizeDepartment(dept) {
 }
 
 // ---- POST /biostar/register-user ----
-// application/json. Fields: name, email, department, title (emp code), photo_url, phone?, user_id?
+// application/json. Fields: name, email, department, title (also used as Darwinbox employee_no), phone?, user_id?
+// Photo is no longer passed in -- fetched server-side from Darwinbox (downloadPersonalDocs) using `title` as employee_no.
 // Mirrors biostar.sh: create user (skip if exists) -> upload profile photo -> extract + attach visual face template
 app.post("/biostar/register-user", async (req, res) => {
-  const { name, email, department, title, phone, user_id, photo_url } = req.body || {};
+  const { name, email, department, title, phone, user_id } = req.body || {};
   console.log("[biostar] body received:", JSON.stringify(req.body || {}));
 
-  const missing = ["name", "email", "department", "title", "photo_url"].filter((k) => !req.body?.[k]);
+  const missing = ["name", "email", "department", "title"].filter(
+    (k) => !req.body?.[k],
+  );
   if (missing.length) {
     console.log(`[biostar] rejecting: missing ${missing.join(", ")}`);
-    return res.status(400).json({ success: false, error: `missing fields: ${missing.join(", ")}` });
+    return res
+      .status(400)
+      .json({ success: false, error: `missing fields: ${missing.join(", ")}` });
   }
 
   const now = new Date();
@@ -242,23 +305,40 @@ app.post("/biostar/register-user", async (req, res) => {
   fiveYearsOut.setFullYear(fiveYearsOut.getFullYear() + 5);
 
   try {
-    console.log(`[biostar] fetching photo from ${photo_url}`);
-    const photoRes = await fetch(photo_url);
+    console.log(
+      `[biostar] resolving profile pic from Darwinbox for employee_no="${title}"`,
+    );
+    const photoUrl = await getProfilePicUrl(title);
+    console.log(
+      `[biostar] got signed S3 url, fetching immediately (expires in ~10min)`,
+    );
+
+    const photoRes = await fetch(photoUrl);
     if (!photoRes.ok) {
-      throw new Error(`photo_url fetch failed: HTTP ${photoRes.status}`);
+      throw new Error(
+        `Darwinbox photo download failed: HTTP ${photoRes.status}`,
+      );
     }
     const arrayBuffer = await photoRes.arrayBuffer();
     const photoBuffer = Buffer.from(arrayBuffer);
     if (photoBuffer.length > 8 * 1024 * 1024) {
-      throw new Error(`photo too large: ${Math.round(photoBuffer.length / 1024 / 1024)}MB (max 8MB)`);
+      throw new Error(
+        `photo too large: ${Math.round(photoBuffer.length / 1024 / 1024)}MB (max 8MB)`,
+      );
     }
-    console.log(`[biostar] photo fetched: ${Math.round(photoBuffer.length / 1024)}KB, content-type=${photoRes.headers.get("content-type")}`);
+    console.log(
+      `[biostar] photo fetched: ${Math.round(photoBuffer.length / 1024)}KB, content-type=${photoRes.headers.get("content-type")}`,
+    );
     const photoBase64 = photoBuffer.toString("base64");
 
-    console.log(`[biostar] starting registerUser for name="${name}" title="${title}" user_id="${user_id || "(auto)"}"`);
+    console.log(
+      `[biostar] starting registerUser for name="${name}" title="${title}" user_id="${user_id || "(auto)"}"`,
+    );
     const cleanDepartment = sanitizeDepartment(department);
     if (cleanDepartment !== department) {
-      console.log(`[biostar] sanitized department "${department}" -> "${cleanDepartment}"`);
+      console.log(
+        `[biostar] sanitized department "${department}" -> "${cleanDepartment}"`,
+      );
     }
     const steps = await registerUser({
       userId: user_id || "",

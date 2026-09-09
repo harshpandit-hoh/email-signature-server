@@ -6,6 +6,12 @@ const PASSWORD = process.env.BIOSTAR_PASSWORD;
 const USER_GROUP_ID = process.env.BIOSTAR_USER_GROUP_ID || "3440";
 const ACCESS_GROUP_ID = process.env.BIOSTAR_ACCESS_GROUP_ID || "2";
 
+const DARWINBOX_API_KEY = process.env.DARWINBOX_API_KEY;
+const DARWINBOX_USERNAME = process.env.DARWINBOX_USERNAME; // Basic Auth, not the api_key
+const DARWINBOX_PASSWORD = process.env.DARWINBOX_PASSWORD;
+const DARWINBOX_URL =
+  "https://hoh.darwinbox.in/Employeedocs/downloadPersonalDocs";
+
 function base() {
   return `https://${SERVER_IP}`;
 }
@@ -15,9 +21,14 @@ function base() {
 // (different instance) -- cert check still applies -> generic "fetch failed" against a
 // self-signed box. Fix: use undici's own fetch + its own Agent together, guaranteed compatible.
 const { fetch: undiciFetch, Agent } = require("undici");
-const insecureDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+const insecureDispatcher = new Agent({
+  connect: { rejectUnauthorized: false },
+});
 
-async function biostarFetch(urlPath, { method = "GET", sessionId, body, rawHeaders } = {}) {
+async function biostarFetch(
+  urlPath,
+  { method = "GET", sessionId, body, rawHeaders } = {},
+) {
   let res;
   try {
     res = await undiciFetch(`${base()}${urlPath}`, {
@@ -33,8 +44,12 @@ async function biostarFetch(urlPath, { method = "GET", sessionId, body, rawHeade
   } catch (err) {
     // surface the real network cause (ECONNREFUSED, cert error, DNS, timeout, etc.)
     // instead of undici's generic "fetch failed"
-    const cause = err.cause ? ` (cause: ${err.cause.code || err.cause.message || err.cause})` : "";
-    throw new Error(`BioStar request to ${urlPath} failed: ${err.message}${cause}`);
+    const cause = err.cause
+      ? ` (cause: ${err.cause.code || err.cause.message || err.cause})`
+      : "";
+    throw new Error(
+      `BioStar request to ${urlPath} failed: ${err.message}${cause}`,
+    );
   }
   const text = await res.text();
   let json;
@@ -46,26 +61,88 @@ async function biostarFetch(urlPath, { method = "GET", sessionId, body, rawHeade
   return { status: res.status, json, text, headers: res.headers };
 }
 
+// ---- Darwinbox: resolve employee_no -> a short-lived signed S3 URL for their profile pic ----
+// URL expires in ~10 min (X-Amz-Expires=600), so the caller must download it immediately
+// after this call, not stash it for later.
+async function getProfilePicUrl(employeeNo) {
+  if (!DARWINBOX_API_KEY || !DARWINBOX_USERNAME || !DARWINBOX_PASSWORD) {
+    throw new Error(
+      "DARWINBOX_API_KEY / DARWINBOX_USERNAME / DARWINBOX_PASSWORD not set in env",
+    );
+  }
+  const basicAuth = Buffer.from(
+    `${DARWINBOX_USERNAME}:${DARWINBOX_PASSWORD}`,
+  ).toString("base64");
+
+  let res;
+  try {
+    res = await undiciFetch(DARWINBOX_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${basicAuth}`,
+      },
+      body: JSON.stringify({
+        api_key: DARWINBOX_API_KEY,
+        employee_no: employeeNo,
+        for: "profile_pic",
+      }),
+    });
+  } catch (err) {
+    const cause = err.cause
+      ? ` (cause: ${err.cause.code || err.cause.message || err.cause})`
+      : "";
+    throw new Error(
+      `Darwinbox profile pic request failed: ${err.message}${cause}`,
+    );
+  }
+
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(
+      `Darwinbox profile pic response not JSON (HTTP ${res.status}): ${text.slice(0, 300)}`,
+    );
+  }
+
+  if (json.status !== 1 || !json.url) {
+    throw new Error(
+      `Darwinbox profile pic lookup failed for employee_no=${employeeNo}: ${JSON.stringify(json)}`,
+    );
+  }
+  return json.url;
+}
+
 async function login() {
   if (!SERVER_IP || !USERNAME || !PASSWORD) {
-    throw new Error("BIOSTAR_SERVER_IP / BIOSTAR_USERNAME / BIOSTAR_PASSWORD not set in env");
+    throw new Error(
+      "BIOSTAR_SERVER_IP / BIOSTAR_USERNAME / BIOSTAR_PASSWORD not set in env",
+    );
   }
   let res;
   try {
     res = await undiciFetch(`${base()}/api/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ User: { login_id: USERNAME, password: PASSWORD } }),
+      body: JSON.stringify({
+        User: { login_id: USERNAME, password: PASSWORD },
+      }),
       dispatcher: insecureDispatcher,
     });
   } catch (err) {
-    const cause = err.cause ? ` (cause: ${err.cause.code || err.cause.message || err.cause})` : "";
+    const cause = err.cause
+      ? ` (cause: ${err.cause.code || err.cause.message || err.cause})`
+      : "";
     throw new Error(`BioStar login request failed: ${err.message}${cause}`);
   }
   const sessionId = res.headers.get("bs-session-id");
   if (!sessionId) {
     const text = await res.text();
-    throw new Error(`BioStar login failed (HTTP ${res.status}): ${text.slice(0, 300)}`);
+    throw new Error(
+      `BioStar login failed (HTTP ${res.status}): ${text.slice(0, 300)}`,
+    );
   }
   return sessionId;
 }
@@ -73,7 +150,9 @@ async function login() {
 // BioStar returns Response.code as a STRING ("0"), not a number -- strict === 0 always
 // failed here even on real success. Normalize before comparing.
 function ok(json) {
-  return json?.Response?.code !== undefined && String(json.Response.code) === "0";
+  return (
+    json?.Response?.code !== undefined && String(json.Response.code) === "0"
+  );
 }
 
 async function getNextUserId(sessionId) {
@@ -88,7 +167,20 @@ async function userExists(sessionId, userId) {
   return ok(json);
 }
 
-async function createUser(sessionId, { userId, name, email, department, title, phone, empCode, startDatetime, expiryDatetime }) {
+async function createUser(
+  sessionId,
+  {
+    userId,
+    name,
+    email,
+    department,
+    title,
+    phone,
+    empCode,
+    startDatetime,
+    expiryDatetime,
+  },
+) {
   const payload = {
     User: {
       user_id: String(userId),
@@ -105,7 +197,11 @@ async function createUser(sessionId, { userId, name, email, department, title, p
       user_custom_fields: [{ item: empCode, custom_field: { id: "1" } }],
     },
   };
-  const { json } = await biostarFetch("/api/users", { method: "POST", sessionId, body: payload });
+  const { json } = await biostarFetch("/api/users", {
+    method: "POST",
+    sessionId,
+    body: payload,
+  });
   if (!ok(json)) {
     throw new Error(`BioStar user create failed: ${JSON.stringify(json)}`);
   }
@@ -113,9 +209,15 @@ async function createUser(sessionId, { userId, name, email, department, title, p
 
 async function uploadProfilePhoto(sessionId, userId, photoBase64) {
   const payload = { User: { user_id: String(userId), photo: photoBase64 } };
-  const { json } = await biostarFetch(`/api/users/${userId}`, { method: "PUT", sessionId, body: payload });
+  const { json } = await biostarFetch(`/api/users/${userId}`, {
+    method: "PUT",
+    sessionId,
+    body: payload,
+  });
   if (!ok(json)) {
-    throw new Error(`BioStar profile photo upload failed: ${JSON.stringify(json)}`);
+    throw new Error(
+      `BioStar profile photo upload failed: ${JSON.stringify(json)}`,
+    );
   }
 }
 
@@ -127,7 +229,9 @@ async function registerVisualFace(sessionId, userId, photoBase64) {
     body: { template_ex_picture: photoBase64 },
   });
   if (!ok(step1.json)) {
-    throw new Error(`BioStar face extraction failed: ${JSON.stringify(step1.json)}`);
+    throw new Error(
+      `BioStar face extraction failed: ${JSON.stringify(step1.json)}`,
+    );
   }
 
   const normalizedImage = step1.json.image;
@@ -145,18 +249,33 @@ async function registerVisualFace(sessionId, userId, photoBase64) {
     body: {
       User: {
         credentials: {
-          visualFaces: [{ template_ex_normalized_image: normalizedImage, templates }],
+          visualFaces: [
+            { template_ex_normalized_image: normalizedImage, templates },
+          ],
         },
       },
     },
   });
   if (!ok(step2.json)) {
-    throw new Error(`BioStar face attach failed: ${JSON.stringify(step2.json)}`);
+    throw new Error(
+      `BioStar face attach failed: ${JSON.stringify(step2.json)}`,
+    );
   }
 }
 
 // Full flow. photoBase64 = raw base64 string (no data: prefix), matches bash's `base64 -w 0`.
-async function registerUser({ userId, name, email, department, title, phone, empCode, startDatetime, expiryDatetime, photoBase64 }) {
+async function registerUser({
+  userId,
+  name,
+  email,
+  department,
+  title,
+  phone,
+  empCode,
+  startDatetime,
+  expiryDatetime,
+  photoBase64,
+}) {
   console.log("[biostar] logging in to", SERVER_IP);
   const sessionId = await login();
   console.log("[biostar] session acquired");
@@ -170,16 +289,30 @@ async function registerUser({ userId, name, email, department, title, phone, emp
 
   const exists = await userExists(sessionId, userId);
   if (exists) {
-    console.log(`[biostar] user_id ${userId} already exists, skipping creation`);
+    console.log(
+      `[biostar] user_id ${userId} already exists, skipping creation`,
+    );
     steps.user_created = false; // already existed, skipped creation like biostar.sh does
   } else {
     console.log(`[biostar] creating user_id ${userId} (${name})`);
-    await createUser(sessionId, { userId, name, email, department, title, phone, empCode, startDatetime, expiryDatetime });
+    await createUser(sessionId, {
+      userId,
+      name,
+      email,
+      department,
+      title,
+      phone,
+      empCode,
+      startDatetime,
+      expiryDatetime,
+    });
     console.log(`[biostar] user_id ${userId} created`);
     steps.user_created = true;
   }
 
-  console.log(`[biostar] uploading profile photo (${Math.round(photoBase64.length / 1024)}KB base64) for user_id ${userId}`);
+  console.log(
+    `[biostar] uploading profile photo (${Math.round(photoBase64.length / 1024)}KB base64) for user_id ${userId}`,
+  );
   await uploadProfilePhoto(sessionId, userId, photoBase64);
   console.log("[biostar] profile photo uploaded");
   steps.photo_uploaded = true;
@@ -192,4 +325,4 @@ async function registerUser({ userId, name, email, department, title, phone, emp
   return steps;
 }
 
-module.exports = { registerUser };
+module.exports = { registerUser, getProfilePicUrl };
