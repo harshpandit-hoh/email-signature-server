@@ -155,6 +155,21 @@ function ok(json) {
   );
 }
 
+function bsCode(json) {
+  return json?.Response?.code !== undefined ? String(json.Response.code) : null;
+}
+
+// Thrown by createUser specifically for BioStar code 212 ("E-mail already exists"), so
+// callers can distinguish "this email is already registered under some other user_id"
+// from every other create failure without string-matching the message.
+class EmailExistsError extends Error {
+  constructor(json) {
+    super(`BioStar user create failed: ${JSON.stringify(json)}`);
+    this.name = "EmailExistsError";
+    this.biostarJson = json;
+  }
+}
+
 async function getNextUserId(sessionId) {
   const { json } = await biostarFetch("/api/users/next_user_id", { sessionId });
   const id = json?.User?.user_id;
@@ -203,6 +218,12 @@ async function createUser(
     body: payload,
   });
   if (!ok(json)) {
+    // code 212 = "E-mail already exists." -- the address is registered under a different
+    // (usually auto-assigned) user_id than the one we tried. Signal this distinctly so
+    // registerUser() can treat it as a soft success instead of a hard failure.
+    if (bsCode(json) === "212") {
+      throw new EmailExistsError(json);
+    }
     throw new Error(`BioStar user create failed: ${JSON.stringify(json)}`);
   }
 }
@@ -295,19 +316,39 @@ async function registerUser({
     steps.user_created = false; // already existed, skipped creation like biostar.sh does
   } else {
     console.log(`[biostar] creating user_id ${userId} (${name})`);
-    await createUser(sessionId, {
-      userId,
-      name,
-      email,
-      department,
-      title,
-      phone,
-      empCode,
-      startDatetime,
-      expiryDatetime,
-    });
-    console.log(`[biostar] user_id ${userId} created`);
-    steps.user_created = true;
+    try {
+      await createUser(sessionId, {
+        userId,
+        name,
+        email,
+        department,
+        title,
+        phone,
+        empCode,
+        startDatetime,
+        expiryDatetime,
+      });
+      console.log(`[biostar] user_id ${userId} created`);
+      steps.user_created = true;
+    } catch (err) {
+      if (err instanceof EmailExistsError) {
+        // This email is already registered under some OTHER user_id (BioStar has no
+        // "look up user by email" endpoint we're using, so we don't know which). The
+        // user_id we picked/were given was never actually created, so there's nothing
+        // valid to attach a photo or face template to -- short-circuit here as a soft
+        // success rather than a hard 502, mirroring the face_registered:false pattern.
+        console.warn(
+          `[biostar] email already registered under a different user_id, treating as soft success: ${err.message}`,
+        );
+        steps.user_created = false;
+        steps.already_existed = true;
+        steps.photo_uploaded = false;
+        steps.face_registered = false;
+        steps.note = "email already registered under a different BioStar user_id; skipped photo/face upload";
+        return steps;
+      }
+      throw err;
+    }
   }
 
   console.log(
