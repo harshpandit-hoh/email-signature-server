@@ -67,6 +67,8 @@ const LOCATIONS = {
   Pogaon: "",
   Powai: "House of Hiranandani, Olympia, Central Avenue, Hiranandani Gardens, Powai, Mumbai - 400 076",
   Thane: "House of Hiranandani, North Point, Hiranandani Estate, Patlipada, Thane (W) - 400 607",
+  Gorai_Site: "Shop No. 24, 25, Mangal Murti CHS Ltd, LT Rd, Opp. Maxus Cinemas, Gorai 3, Borivali West, Mumbai, Maharashtra 400091",
+  Gorai_Sales: "Gorai Nagar, Borivali West, Mumbai, Maharashtra 400091"
 };
 const DEFAULT_LOCATION = "Powai";
 
